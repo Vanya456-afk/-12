@@ -10,7 +10,7 @@ from database import (
     update_stats, do_rebirth, get_top_players, open_daily_case, CATEGORIES
 )
 
-TOKEN = "ТВОЙ_ТОКЕН_ОТ_BOTFATHER" # Вставь сюда свой токен!
+TOKEN = "8906297849:AAHZBlQ-2dipxByhUO-jY22S6zqQ_GiND2c" # Вставь сюда свой токен!
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
