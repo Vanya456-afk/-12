@@ -1,7 +1,11 @@
 import aiosqlite
 import time
+import random
 
 DB_NAME = "tycoon.db"
+
+# Список доступных тематик
+CATEGORIES = ["Brawl Stars", "Minecraft", "Horror Games", "IRL (Влоги)", "Летсплеи"]
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -14,34 +18,34 @@ async def init_db():
                 last_collect INTEGER,
                 stage INTEGER DEFAULT 1,
                 subscribers INTEGER DEFAULT 0,
-                rebirths INTEGER DEFAULT 0
+                rebirths INTEGER DEFAULT 0,
+                last_case INTEGER DEFAULT 0
             )
         ''')
         await db.commit()
 
 async def get_user(user_id: int, username: str = "Игрок"):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT balance, income_per_sec, last_collect, stage, subscribers, rebirths FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute("SELECT balance, income_per_sec, last_collect, stage, subscribers, rebirths, last_case FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
             now = int(time.time())
             if not row:
                 await db.execute(
-                    "INSERT INTO users (user_id, username, balance, income_per_sec, last_collect, stage, subscribers, rebirths) VALUES (?, ?, 0, 1, ?, 1, 0, 0)",
+                    "INSERT INTO users (user_id, username, balance, income_per_sec, last_collect, stage, subscribers, rebirths, last_case) VALUES (?, ?, 0, 1, ?, 1, 0, 0, 0)",
                     (user_id, username, now)
                 )
                 await db.commit()
-                return {"balance": 0, "income_per_sec": 1, "last_collect": now, "stage": 1, "subscribers": 0, "rebirths": 0}
+                return {"balance": 0, "income_per_sec": 1, "last_collect": now, "stage": 1, "subscribers": 0, "rebirths": 0, "last_case": 0}
             else:
-                # Обновляем никнейм на случай изменений
                 await db.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
                 await db.commit()
-            return {"balance": row[0], "income_per_sec": row[1], "last_collect": row[2], "stage": row[3], "subscribers": row[4], "rebirths": row[5]}
+            return {"balance": row[0], "income_per_sec": row[1], "last_collect": row[2], "stage": row[3], "subscribers": row[4], "rebirths": row[5], "last_case": row[6]}
 
 async def collect_money(user_id: int):
     user = await get_user(user_id)
     now = int(time.time())
     seconds_passed = now - user["last_collect"]
-    multiplier = 1 + (user["rebirths"] * 1.0) # Перерождения дают множитель
+    multiplier = 1 + (user["rebirths"] * 1.0)
     earned = seconds_passed * user["income_per_sec"] * multiplier
     
     new_balance = user["balance"] + earned
@@ -76,9 +80,39 @@ async def update_stats(user_id: int, add_balance: float = 0, add_subs: int = 0):
         await db.execute("UPDATE users SET balance = ?, subscribers = ? WHERE user_id = ?", (new_balance, new_subs, user_id))
         await db.commit()
 
+async def open_daily_case(user_id: int):
+    user = await get_user(user_id)
+    now = int(time.time())
+    cooldown = 24 * 3600 # 24 часа
+    
+    if now - user["last_case"] < cooldown:
+        remaining = cooldown - (now - user["last_case"])
+        hours = remaining // 3600
+        minutes = (remaining % 3600) // 60
+        return False, f"⏳ Посылка ещё не пришла! Приходи через {hours} ч. {minutes} мин."
+    
+    # Генерация награды
+    loot_type = random.choice(["money", "subs", "golden_button"])
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE users SET last_case = ? WHERE user_id = ?", (now, user_id))
+        await db.commit()
+
+    if loot_type == "money":
+        reward = random.randint(500, 3000) * (user["rebirths"] + 1)
+        await update_stats(user_id, add_balance=reward)
+        return True, f"📦 Из посылки фанатов выпало: **${reward}** на покупку нового оборудования!"
+    elif loot_type == "subs":
+        reward_subs = random.randint(100, 500) * (user["rebirths"] + 1)
+        await update_stats(user_id, add_subs=reward_subs)
+        return True, f"📦 Фанаты запустили о тебе флешмоб! **+{reward_subs} новых подписчиков**!"
+    else:
+        reward = 5000 * (user["rebirths"] + 1)
+        await update_stats(user_id, add_balance=reward, add_subs=300)
+        return True, f"🏆 **ЛЕГЕНДАРКА!** В посылке оказалась **Золотая Кнопка YouTube**!\n➕ Получено: **${reward}** и **+300 подписчиков**!"
+
 async def do_rebirth(user_id: int):
     user = await get_user(user_id)
-    # Перерождение доступно при достижении 5 этапа и $10,000
     if user["stage"] < 5 or user["balance"] < 10000:
         return False, "Для перерождения нужно пройти все покупки и иметь $10,000 на балансе!"
     
