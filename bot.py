@@ -5,14 +5,21 @@ import random
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from database import init_db, get_user, collect_money, buy_upgrade, update_stats, do_rebirth, get_top_players
+from database import init_db, get_user, collect_money, buy_upgrade, update_stats, do_rebirth, get_top_players, open_daily_case, CATEGORIES
 
 TOKEN = "8906297849:AAHZBlQ-2dipxByhUO-jY22S6zqQ_GiND2c" # Вставь свой токен сюда
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Список построек
+# Генерация тренда дня на основе даты
+def get_daily_trend():
+    day_seed = int(time.strftime("%Y%m%d"))
+    random.seed(day_seed)
+    trend = random.choice(CATEGORIES)
+    random.seed() # сброс seed обратно
+    return trend
+
 UPGRADES = {
     1: {"name": "💻 Б/У Ноутбук", "cost": 100, "income": 3},
     2: {"name": "🎙 Дешевый микрофон", "cost": 300, "income": 8},
@@ -25,6 +32,7 @@ def main_kb():
         keyboard=[
             [KeyboardButton(text="💰 Забрать прибыль"), KeyboardButton(text="🏬 Магазин")],
             [KeyboardButton(text="🔴 Начать стрим"), KeyboardButton(text="🎬 Записать видео")],
+            [KeyboardButton(text="🎁 Посылка от фанатов"), KeyboardButton(text="🔥 Тренд дня")],
             [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="🏆 Топ игроков")],
             [KeyboardButton(text="🔄 Перерождение")]
         ],
@@ -38,9 +46,18 @@ async def start_cmd(message: types.Message):
     
     text = (
         "Приветствую тебя, начинающий стример.\n"
-        "Прокачивайся, получай деньги, проводи стримы, и поднимайся в топ по балансу!"
+        "Прокачивайся, получай деньги, проводи стримы, снимай IRL-влоги и поднимайся в топ по балансу!"
     )
     await message.answer(text, reply_markup=main_kb())
+
+@dp.message(F.text == "🔥 Тренд дня")
+async def trend_cmd(message: types.Message):
+    trend = get_daily_trend()
+    text = (
+        f"🔥 **ТРЕНД СЕГОДНЯШНЕГО ДНЯ:** **{trend}**!\n\n"
+        f"⚡️ Если ты проводишь стрим или выкладываешь видео по этой тематике, ты получаешь **x2 к деньгам и подписчикам**!"
+    )
+    await message.answer(text, parse_mode="Markdown")
 
 @dp.message(F.text == "💰 Забрать прибыль")
 async def collect_cmd(message: types.Message):
@@ -69,49 +86,71 @@ async def profile_cmd(message: types.Message):
 
 @dp.message(F.text == "🔴 Начать стрим")
 async def stream_cmd(message: types.Message):
-    username = message.from_user.first_name or "Стример"
-    user = await get_user(message.from_user.id, username)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=cat, callback_data=f"stream_{cat}")] for cat in CATEGORIES
+    ])
+    await message.answer("🎥 Выберите тематику для проведения стрима:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("stream_"))
+async def process_stream(callback: types.CallbackQuery):
+    cat = callback.data.split("stream_")[1]
+    user = await get_user(callback.from_user.id)
+    trend = get_daily_trend()
     
-    # Шанс события
-    event_type = random.choices(["donat", "collab", "quiet"], weights=[60, 20, 20])[0]
+    is_trend = (cat == trend)
+    trend_mult = 2 if is_trend else 1
     
-    if event_type == "collab" and (user["subscribers"] >= 500 or user["rebirths"] > 0):
-        reward = random.randint(300, 1500) * (user["rebirths"] + 1)
-        subs = random.randint(50, 200)
-        await update_stats(message.from_user.id, add_balance=reward, add_subs=subs)
-        msg = f"🤝 **КОЛЛАБОРАЦИЯ!** Известный бренд предложил вам интеграцию на стриме!\n➕ Получено: **${reward}** и **+{subs} подписчиков**!"
-    elif event_type == "donat":
-        reward = random.randint(50, 400) * (user["rebirths"] + 1)
-        subs = random.randint(10, 50)
-        await update_stats(message.from_user.id, add_balance=reward, add_subs=subs)
-        msg = f"💸 **ДОНАТ!** Щедрый зритель задонатил вам на стриме!\n➕ Получено: **${reward}** и **+{subs} подписчиков**!"
-    else:
-        subs = random.randint(5, 20)
-        await update_stats(message.from_user.id, add_subs=subs)
-        msg = f"🎥 Стрим прошёл спокойно. Вы привлекли **+{subs} новых подписчиков**!"
-        
-    await message.answer(msg, parse_mode="Markdown")
+    reward = random.randint(40, 200) * (user["rebirths"] + 1) * trend_mult
+    subs = random.randint(10, 40) * trend_mult
+    
+    await update_stats(callback.from_user.id, add_balance=reward, add_subs=subs)
+    
+    msg = f"🔴 **Стрим по {cat} завершён!**\n"
+    if is_trend:
+        msg += f"🔥 **ПОПАЛ В ТРЕНД!** Награды удвоены (x2)!\n"
+    msg += f"➕ Заработано: **+${reward}**\n➕ Пришло: **+{subs} подписчиков**"
+    
+    await callback.message.edit_text(msg, parse_mode="Markdown")
 
 @dp.message(F.text == "🎬 Записать видео")
 async def video_cmd(message: types.Message):
-    subs = random.randint(15, 60)
-    money = random.randint(20, 100)
-    await update_stats(message.from_user.id, add_balance=money, add_subs=subs)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=cat, callback_data=f"video_{cat}")] for cat in CATEGORIES
+    ])
+    await message.answer("🎬 Выберите тематику для нового видео/влога:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("video_"))
+async def process_video(callback: types.CallbackQuery):
+    cat = callback.data.split("video_")[1]
+    user = await get_user(callback.from_user.id)
+    trend = get_daily_trend()
     
-    await message.answer(
-        f"🎬 Вы смонтировали и выложили новое видео!\n"
-        f"📈 Оно набрало просмотры: **+{subs} подписчиков** и **+${money} с монетизации**!",
-        parse_mode="Markdown"
-    )
+    is_trend = (cat == trend)
+    trend_mult = 2 if is_trend else 1
+    
+    subs = random.randint(15, 60) * trend_mult
+    money = random.randint(20, 120) * (user["rebirths"] + 1) * trend_mult
+    
+    await update_stats(callback.from_user.id, add_balance=money, add_subs=subs)
+    
+    msg = f"🎬 **Видео по {cat} опубликовано!**\n"
+    if is_trend:
+        msg += f"🔥 **ЗАЛЕТЕЛО В РЕКОМЕНДАЦИИ! (Тренд дня x2)**\n"
+    msg += f"📈 Просмотры принесли: **+{subs} подписчиков** и **+${money} с монетизации**!"
+    
+    await callback.message.edit_text(msg, parse_mode="Markdown")
+
+@dp.message(F.text == "🎁 Посылка от фанатов")
+async def case_cmd(message: types.Message):
+    success, msg = await open_daily_case(message.from_user.id)
+    await message.answer(msg, parse_mode="Markdown")
 
 @dp.message(F.text == "🏆 Топ игроков")
 async def top_cmd(message: types.Message):
     top_players = await get_top_players()
-    
     text = "🏆 **ТОП-10 СТРИМЕРОВ ПО БАЛАНСУ**\n\n"
     for idx, (name, balance, subs) in enumerate(top_players, 1):
         text += f"{idx}. **{name}** — ${balance:.1f} | 👥 {subs} подп.\n"
-        
     await message.answer(text, parse_mode="Markdown")
 
 @dp.message(F.text == "🔄 Перерождение")
