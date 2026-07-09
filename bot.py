@@ -6,7 +6,11 @@ from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from database import init_db, get_user, collect_money, buy_upgrade
 
-TOKEN = os.getenv("8906297849:AAHZBlQ-2dipxByhUO-jY22S6zqQ_GiND2c")  # Берем токен из Переменных Окружения (Render)
+TOKEN = os.environ.get("8906297849:AAHZBlQ-2dipxByhUO-jY22S6zqQ_GiND2c")
+
+if not TOKEN:
+    raise ValueError("ОШИБКА: Переменная BOT_TOKEN не найдена в Environment Variables!")
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
